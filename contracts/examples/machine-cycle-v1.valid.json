@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "eventId": "de73fc96-87ab-460f-b24f-a81c51dfec6f",
+  "tenantId": "tenant-017",
+  "siteId": "site-north-01",
+  "machineId": "IMM-0042",
+  "machineBootId": "f16fa35a-836c-4246-b707-f05e0ff491e2",
+  "sequenceNumber": 18421,
+  "occurredAt": "2026-09-04T08:14:31.482Z",
+  "type": "CYCLE_COMPLETED",
+  "payload": {
+    "cycleNumber": 9331,
+    "totalDurationMs": 21480,
+    "plasticizingDurationMs": 4320,
+    "injectionDurationMs": 710,
+    "coolingDurationMs": 11800,
+    "demoldingDurationMs": 2080,
+    "peakInjectionPressureBar": 1246.2,
+    "meltTemperatureC": 238.4,
+    "goodParts": 4,
+    "rejectedParts": 0
+  }
+}
+

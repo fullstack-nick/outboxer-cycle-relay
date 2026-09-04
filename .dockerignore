@@ -1,0 +1,9 @@
+.git
+.gradle
+.idea
+.outboxer
+.secrets
+**/build
+INTERNAL_PROJECT_PLAN.md
+docs/evidence/generated
+

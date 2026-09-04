@@ -1,0 +1,281 @@
+name: outboxer
+
+services:
+  factory-mqtt:
+    image: eclipse-mosquitto:2.1.2-alpine
+    container_name: outboxer-factory-mqtt
+    restart: unless-stopped
+    env_file: ../.secrets/compose.env
+    ports:
+      - "127.0.0.1:11883:1883"
+    volumes:
+      - ./mqtt/factory/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mqtt/factory/acl:/mosquitto/config/acl:ro
+      - ../.secrets/mqtt/factory/passwords:/mosquitto/config/passwords:ro
+      - factory-mqtt-data:/mosquitto/data
+    networks:
+      - factory-net
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -p 1883 -u health -P \"$${FACTORY_HEALTH_PASSWORD}\" -t '$$SYS/broker/uptime' -C 1 -W 3 >/dev/null"]
+      interval: 5s
+      timeout: 4s
+      retries: 12
+    security_opt:
+      - no-new-privileges:true
+
+  uplink-mqtt:
+    image: eclipse-mosquitto:2.1.2-alpine
+    container_name: outboxer-uplink-mqtt
+    restart: unless-stopped
+    env_file: ../.secrets/compose.env
+    ports:
+      - "127.0.0.1:11884:1883"
+    volumes:
+      - ./mqtt/uplink/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mqtt/uplink/acl:/mosquitto/config/acl:ro
+      - ../.secrets/mqtt/uplink/passwords:/mosquitto/config/passwords:ro
+      - uplink-mqtt-data:/mosquitto/data
+    networks:
+      - uplink-net
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -p 1883 -u health -P \"$${UPLINK_HEALTH_PASSWORD}\" -t '$$SYS/broker/uptime' -C 1 -W 3 >/dev/null"]
+      interval: 5s
+      timeout: 4s
+      retries: 12
+    security_opt:
+      - no-new-privileges:true
+
+  kafka:
+    image: apache/kafka:4.3.1
+    container_name: outboxer-kafka
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:19092:19092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:19092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://127.0.0.1:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 12
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks:
+      - data-net
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 8s
+      retries: 18
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 1400M
+
+  postgres:
+    image: postgres:18.6-alpine
+    container_name: outboxer-postgres
+    restart: unless-stopped
+    env_file: ../.secrets/compose.env
+    environment:
+      POSTGRES_DB: outboxer
+      POSTGRES_USER: outboxer_admin
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD}
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - ./postgres/init-app-user.sh:/docker-entrypoint-initdb.d/10-app-user.sh:ro
+    networks:
+      - data-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U outboxer_admin -d outboxer"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+
+  central-cycle-service:
+    build:
+      context: ..
+      dockerfile: central-cycle-service/Dockerfile
+    image: outboxer/central-cycle-service:local
+    container_name: outboxer-central-cycle-service
+    restart: unless-stopped
+    env_file: ../.secrets/compose.env
+    environment:
+      CENTRAL_HTTP_PORT: 8080
+      CENTRAL_JDBC_URL: jdbc:postgresql://postgres:5432/outboxer
+      CENTRAL_R2DBC_URL: r2dbc:postgresql://postgres:5432/outboxer
+      POSTGRES_APP_USERNAME: outboxer_app
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      UPLINK_MQTT_HOST: uplink-mqtt
+      UPLINK_MQTT_PORT: 1883
+      UPLINK_MQTT_USERNAME: central-uplink
+      UPLINK_MQTT_PASSWORD: ${UPLINK_CENTRAL_PASSWORD}
+      UPLINK_MQTT_CLIENT_ID: outboxer-central-uplink
+      CENTRAL_FAULT_HALT_AFTER_DATABASE_COMMIT_COUNT: ${CENTRAL_FAULT_HALT_AFTER_DATABASE_COMMIT_COUNT:-0}
+      CENTRAL_FAULT_RECEIPT_DELAY_MILLIS: ${CENTRAL_FAULT_RECEIPT_DELAY_MILLIS:-0}
+      JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError
+    ports:
+      - "127.0.0.1:18080:8080"
+    depends_on:
+      uplink-mqtt:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - uplink-net
+      - data-net
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 35s
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:8080/actuator/health/readiness >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+
+  edge-relay:
+    build:
+      context: ..
+      dockerfile: edge-relay/Dockerfile
+    image: outboxer/edge-relay:local
+    container_name: outboxer-edge-relay
+    restart: unless-stopped
+    env_file: ../.secrets/compose.env
+    environment:
+      EDGE_HTTP_PORT: 8080
+      EDGE_DATABASE_URL: jdbc:sqlite:/var/lib/outboxer/edge.db?journal_mode=WAL&synchronous=FULL&foreign_keys=on&busy_timeout=5000
+      FACTORY_MQTT_HOST: factory-mqtt
+      FACTORY_MQTT_PORT: 1883
+      FACTORY_MQTT_USERNAME: edge-factory
+      FACTORY_MQTT_PASSWORD: ${FACTORY_EDGE_PASSWORD}
+      FACTORY_MQTT_CLIENT_ID: outboxer-edge-factory
+      UPLINK_MQTT_HOST: uplink-mqtt
+      UPLINK_MQTT_PORT: 1883
+      UPLINK_MQTT_USERNAME: edge-uplink
+      UPLINK_MQTT_PASSWORD: ${UPLINK_EDGE_PASSWORD}
+      UPLINK_MQTT_CLIENT_ID: outboxer-edge-uplink
+      EDGE_FAULT_HALT_AFTER_PUBLISH_COUNT: ${EDGE_FAULT_HALT_AFTER_PUBLISH_COUNT:-0}
+      JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError
+    ports:
+      - "127.0.0.1:18081:8080"
+    volumes:
+      - edge-data:/var/lib/outboxer
+    depends_on:
+      factory-mqtt:
+        condition: service_healthy
+      uplink-mqtt:
+        condition: service_healthy
+    networks:
+      - factory-net
+      - uplink-net
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 25s
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:8080/actuator/health/readiness >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 640M
+
+  machine-simulator:
+    profiles: ["simulation"]
+    build:
+      context: ..
+      dockerfile: machine-simulator/Dockerfile
+    image: outboxer/machine-simulator:local
+    container_name: outboxer-machine-simulator
+    restart: "no"
+    env_file: ../.secrets/compose.env
+    environment:
+      FACTORY_MQTT_HOST: factory-mqtt
+      FACTORY_MQTT_PORT: 1883
+      FACTORY_MQTT_USERNAME: simulator
+      FACTORY_MQTT_PASSWORD: ${FACTORY_SIMULATOR_PASSWORD}
+      SIMULATOR_MACHINE_COUNT: ${SIMULATOR_MACHINE_COUNT:-3000}
+      SIMULATOR_CYCLE_INTERVAL_SECONDS: ${SIMULATOR_CYCLE_INTERVAL_SECONDS:-30}
+      SIMULATOR_EVENT_COUNT: ${SIMULATOR_EVENT_COUNT:-0}
+      SIMULATOR_RUN_ID: ${SIMULATOR_RUN_ID:-local-demo}
+      SIMULATOR_TENANT_ID: ${SIMULATOR_TENANT_ID:-tenant-017}
+      SIMULATOR_SITE_ID: ${SIMULATOR_SITE_ID:-site-north-01}
+      SIMULATOR_EXPECTED_FILE: ${SIMULATOR_EXPECTED_FILE:-/evidence/expected-events.csv}
+    volumes:
+      - ../.outboxer/evidence:/evidence
+    depends_on:
+      factory-mqtt:
+        condition: service_healthy
+      edge-relay:
+        condition: service_healthy
+    networks:
+      - factory-net
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  factory-net:
+    name: outboxer-factory-net
+  uplink-net:
+    name: outboxer-uplink-net
+  data-net:
+    name: outboxer-data-net
+
+volumes:
+  factory-mqtt-data:
+    name: outboxer-factory-mqtt-data
+  uplink-mqtt-data:
+    name: outboxer-uplink-mqtt-data
+  edge-data:
+    name: outboxer-edge-data
+  kafka-data:
+    name: outboxer-kafka-data
+  postgres-data:
+    name: outboxer-postgres-data

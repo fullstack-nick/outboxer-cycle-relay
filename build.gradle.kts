@@ -1,4 +1,5 @@
 import org.gradle.api.tasks.testing.Test
+import org.gradle.api.tasks.Exec
 
 plugins {
     base
@@ -30,6 +31,12 @@ subprojects {
 }
 
 spotless {
+    format("source") {
+        target("**/*.java", "**/*.kt")
+        targetExclude("**/build/**")
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
     format("repository") {
         target("*.kts", "*.md", "*.yml", "*.yaml", "*.json", "*.sh", "*.ps1")
         targetExclude(
@@ -50,9 +57,7 @@ tasks.named("check") {
 tasks.register("integrationTest") {
     group = "verification"
     description = "Runs all component integration tests."
-    dependsOn(subprojects.mapNotNull { project ->
-        project.tasks.findByName("integrationTest")?.path
-    })
+    dependsOn(":central-cycle-service:integrationTest")
 }
 
 tasks.register("contractCompatibilityTest") {
@@ -61,21 +66,30 @@ tasks.register("contractCompatibilityTest") {
     dependsOn(":contracts:test")
 }
 
-tasks.register("composeSmokeTest") {
+fun registerAcceptanceTask(name: String, mode: String, taskDescription: String) = tasks.register<Exec>(name) {
     group = "verification"
-    description = "Runs the local Docker Compose smoke test."
-    dependsOn("check")
-    doLast {
-        logger.lifecycle("Compose smoke coordinator will be implemented before the Stage 2 gate.")
-    }
+    description = taskDescription
+    val javaBinary = file(
+        "${System.getProperty("java.home")}/bin/java${if (System.getProperty("os.name").startsWith("Windows")) ".exe" else ""}",
+    )
+    workingDir(rootDir)
+    commandLine(javaBinary, file("scripts/AcceptanceCoordinator.java"), mode)
 }
 
-tasks.register("outageTest") {
-    group = "verification"
-    description = "Runs the full local outage and recovery acceptance test."
-    doLast {
-        throw GradleException("Outage acceptance coordinator is intentionally failing until implemented.")
-    }
+registerAcceptanceTask("composeSmokeTest", "smoke", "Runs the local Docker Compose smoke test.").configure {
+    dependsOn("check")
+}
+
+registerAcceptanceTask("crashWindowTest", "crash", "Runs deterministic edge and central crash-window tests.").configure {
+    dependsOn("check")
+}
+
+registerAcceptanceTask("loadTest", "load", "Runs the sustained local throughput test.").configure {
+    dependsOn("check")
+}
+
+registerAcceptanceTask("outageTest", "outage", "Runs the full local outage and recovery acceptance test.").configure {
+    dependsOn("check")
 }
 
 tasks.register("publicationCheck") {

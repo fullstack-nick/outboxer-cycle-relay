@@ -1,0 +1,80 @@
+spring:
+  application:
+    name: edge-relay
+  datasource:
+    url: ${EDGE_DATABASE_URL:jdbc:sqlite:.outboxer/edge/edge.db?journal_mode=WAL&synchronous=FULL&foreign_keys=on&busy_timeout=5000}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  task:
+    scheduling:
+      pool:
+        size: 2
+
+server:
+  port: ${EDGE_HTTP_PORT:18081}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: always
+      status:
+        order: fatal,down,out-of-service,degraded,unknown,up
+        http-mapping:
+          down: 503
+          out-of-service: 503
+          degraded: 503
+      group:
+        readiness:
+          include: readinessState,db,uplink,storage
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+
+outboxer:
+  edge:
+    future-clock-tolerance-seconds: ${EDGE_FUTURE_CLOCK_TOLERANCE_SECONDS:300}
+    dispatch-batch-size: ${EDGE_DISPATCH_BATCH_SIZE:5000}
+    dispatch-shards: ${EDGE_DISPATCH_SHARDS:64}
+    dispatch-queue-capacity: ${EDGE_DISPATCH_QUEUE_CAPACITY:500}
+    receipt-batch-size: ${EDGE_RECEIPT_BATCH_SIZE:500}
+    receipt-queue-capacity: ${EDGE_RECEIPT_QUEUE_CAPACITY:10000}
+    receipt-batch-linger-millis: ${EDGE_RECEIPT_BATCH_LINGER_MILLIS:10}
+    receipt-timeout-seconds: ${EDGE_RECEIPT_TIMEOUT_SECONDS:30}
+    sent-retention-seconds: ${EDGE_SENT_RETENTION_SECONDS:86400}
+    retry-base-seconds: ${EDGE_RETRY_BASE_SECONDS:1}
+    retry-cap-seconds: ${EDGE_RETRY_CAP_SECONDS:60}
+    minimum-free-bytes: ${EDGE_MINIMUM_FREE_BYTES:67108864}
+    readiness-pending-threshold: ${EDGE_READINESS_PENDING_THRESHOLD:10000}
+    halt-after-publish-count: ${EDGE_FAULT_HALT_AFTER_PUBLISH_COUNT:0}
+    factory:
+      host: ${FACTORY_MQTT_HOST:localhost}
+      port: ${FACTORY_MQTT_PORT:11883}
+      username: ${FACTORY_MQTT_USERNAME:edge-factory}
+      password: ${FACTORY_MQTT_PASSWORD:}
+      client-id: ${FACTORY_MQTT_CLIENT_ID:outboxer-edge-factory}
+    uplink:
+      host: ${UPLINK_MQTT_HOST:localhost}
+      port: ${UPLINK_MQTT_PORT:11884}
+      username: ${UPLINK_MQTT_USERNAME:edge-uplink}
+      password: ${UPLINK_MQTT_PASSWORD:}
+      client-id: ${UPLINK_MQTT_CLIENT_ID:outboxer-edge-uplink}
+
+logging:
+  structured:
+    format:
+      console: logstash
+  level:
+    root: INFO
+    io.netty: WARN

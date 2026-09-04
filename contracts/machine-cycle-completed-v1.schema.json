@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:outboxer:schema:machine-cycle-completed:v1",
+  "title": "Machine cycle completed event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "tenantId",
+    "siteId",
+    "machineId",
+    "machineBootId",
+    "sequenceNumber",
+    "occurredAt",
+    "type",
+    "payload"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "eventId": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "tenantId": { "$ref": "#/$defs/identifier" },
+    "siteId": { "$ref": "#/$defs/identifier" },
+    "machineId": { "$ref": "#/$defs/identifier" },
+    "machineBootId": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "sequenceNumber": { "type": "integer", "minimum": 0 },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "type": { "const": "CYCLE_COMPLETED" },
+    "payload": { "$ref": "#/$defs/payload" }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cycleNumber",
+        "totalDurationMs",
+        "plasticizingDurationMs",
+        "injectionDurationMs",
+        "coolingDurationMs",
+        "demoldingDurationMs",
+        "peakInjectionPressureBar",
+        "meltTemperatureC",
+        "goodParts",
+        "rejectedParts"
+      ],
+      "properties": {
+        "cycleNumber": { "type": "integer", "minimum": 0 },
+        "totalDurationMs": { "type": "integer", "minimum": 0, "maximum": 86400000 },
+        "plasticizingDurationMs": { "type": "integer", "minimum": 0, "maximum": 86400000 },
+        "injectionDurationMs": { "type": "integer", "minimum": 0, "maximum": 86400000 },
+        "coolingDurationMs": { "type": "integer", "minimum": 0, "maximum": 86400000 },
+        "demoldingDurationMs": { "type": "integer", "minimum": 0, "maximum": 86400000 },
+        "peakInjectionPressureBar": { "type": "number", "minimum": 0, "maximum": 10000 },
+        "meltTemperatureC": { "type": "number", "minimum": -273.15, "maximum": 2000 },
+        "goodParts": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "rejectedParts": { "type": "integer", "minimum": 0, "maximum": 1000000 }
+      }
+    }
+  }
+}
+

@@ -1,0 +1,9 @@
+user simulator
+topic write factory/+/cycles
+
+user edge-factory
+topic read factory/+/cycles
+
+user health
+topic read $SYS/#
+

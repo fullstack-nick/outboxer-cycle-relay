@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:outboxer:schema:cycle-receipt:v1",
+  "title": "Cycle processing receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "eventId", "status", "processedAt"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "eventId": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "status": { "enum": ["ACCEPTED", "REJECTED"] },
+    "processedAt": { "type": "string", "format": "date-time" },
+    "errorCode": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "message": { "type": "string", "minLength": 1, "maxLength": 256 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "REJECTED" } }, "required": ["status"] },
+      "then": { "required": ["errorCode", "message"] },
+      "else": { "not": { "anyOf": [{ "required": ["errorCode"] }, { "required": ["message"] }] } }
+    }
+  ]
+}
+

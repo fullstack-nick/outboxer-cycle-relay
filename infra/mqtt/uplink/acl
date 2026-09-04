@@ -1,0 +1,11 @@
+user edge-uplink
+topic write uplink/+/+/cycles
+topic read receipts/+/cycles
+
+user central-uplink
+topic read uplink/+/+/cycles
+topic write receipts/+/cycles
+
+user health
+topic read $SYS/#
+
