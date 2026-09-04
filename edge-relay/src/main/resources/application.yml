@@ -48,6 +48,9 @@ outboxer:
     dispatch-batch-size: ${EDGE_DISPATCH_BATCH_SIZE:5000}
     dispatch-shards: ${EDGE_DISPATCH_SHARDS:64}
     dispatch-queue-capacity: ${EDGE_DISPATCH_QUEUE_CAPACITY:500}
+    source-batch-size: ${EDGE_SOURCE_BATCH_SIZE:500}
+    source-queue-capacity: ${EDGE_SOURCE_QUEUE_CAPACITY:10000}
+    source-batch-linger-millis: ${EDGE_SOURCE_BATCH_LINGER_MILLIS:10}
     receipt-batch-size: ${EDGE_RECEIPT_BATCH_SIZE:500}
     receipt-queue-capacity: ${EDGE_RECEIPT_QUEUE_CAPACITY:10000}
     receipt-batch-linger-millis: ${EDGE_RECEIPT_BATCH_LINGER_MILLIS:10}

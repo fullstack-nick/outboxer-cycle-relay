@@ -35,15 +35,35 @@ data class ReceiptSettlement(
     val errorCode: String?,
 )
 
+data class StoreCommand(
+    val event: CycleEvent,
+    val sourcePayload: ByteArray,
+    val canonicalPayload: ByteArray,
+)
+
+data class QuarantineCommand(
+    val topic: String,
+    val payload: ByteArray,
+    val reasonCode: String,
+    val reasonMessage: String,
+)
+
 @Repository
 class OutboxRepository(
     private val jdbcTemplate: JdbcTemplate,
     private val clock: Clock,
 ) {
     @Transactional
-    fun store(event: CycleEvent, sourcePayload: ByteArray, canonicalPayload: ByteArray): StoreResult {
+    fun store(event: CycleEvent, sourcePayload: ByteArray, canonicalPayload: ByteArray): StoreResult =
+        storeInternal(StoreCommand(event, sourcePayload, canonicalPayload))
+
+    @Transactional
+    fun storeBatch(commands: List<StoreCommand>): List<StoreResult> = commands.map(::storeInternal)
+
+    private fun storeInternal(command: StoreCommand): StoreResult {
+        val event = command.event
         val now = clock.instant().toString()
-        val sourceHash = sha256(sourcePayload)
+        val sourceHash = sha256(command.sourcePayload)
         return try {
             jdbcTemplate.update(
                 """
@@ -60,7 +80,7 @@ class OutboxRepository(
                 event.sequenceNumber(),
                 event.schemaVersion(),
                 sourceHash,
-                String(canonicalPayload, StandardCharsets.UTF_8),
+                String(command.canonicalPayload, StandardCharsets.UTF_8),
                 now,
                 now,
             )
@@ -162,8 +182,18 @@ class OutboxRepository(
         }
     }
 
-    fun quarantine(topic: String, payload: ByteArray, reasonCode: String, reasonMessage: String) {
-        val excerpt = String(payload.copyOfRange(0, minOf(payload.size, 4_096)), StandardCharsets.UTF_8)
+    @Transactional
+    fun quarantine(topic: String, payload: ByteArray, reasonCode: String, reasonMessage: String) =
+        quarantineInternal(QuarantineCommand(topic, payload, reasonCode, reasonMessage))
+
+    @Transactional
+    fun quarantineBatch(commands: List<QuarantineCommand>) = commands.forEach(::quarantineInternal)
+
+    private fun quarantineInternal(command: QuarantineCommand) {
+        val excerpt = String(
+            command.payload.copyOfRange(0, minOf(command.payload.size, 4_096)),
+            StandardCharsets.UTF_8,
+        )
         jdbcTemplate.update(
             """
             INSERT INTO edge_rejected_message (
@@ -171,11 +201,11 @@ class OutboxRepository(
             ) VALUES (?, ?, ?, ?, ?, ?)
             """.trimIndent(),
             clock.instant().toString(),
-            topic.take(256),
-            sha256(payload),
+            command.topic.take(256),
+            sha256(command.payload),
             excerpt,
-            reasonCode.take(64),
-            reasonMessage.take(256),
+            command.reasonCode.take(64),
+            command.reasonMessage.take(256),
         )
     }
 

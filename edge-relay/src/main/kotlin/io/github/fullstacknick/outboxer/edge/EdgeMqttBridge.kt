@@ -25,6 +25,7 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import org.slf4j.LoggerFactory
 import org.springframework.boot.ApplicationArguments
 import org.springframework.boot.ApplicationRunner
@@ -41,6 +42,8 @@ class EdgeMqttBridge(
 ) : ApplicationRunner {
     private val logger = LoggerFactory.getLogger(javaClass)
     private val sourceExecutor = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "edge-source") }
+    private val sourceWriterExecutor =
+        Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "edge-source-writer") }
     private val receiptExecutor = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "edge-receipt") }
     private val receiptWriterExecutor =
         Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "edge-receipt-writer") }
@@ -48,13 +51,17 @@ class EdgeMqttBridge(
     private val uplinkConnecting = AtomicBoolean()
     private val factorySubscribed = AtomicBoolean()
     private val receiptSubscribed = AtomicBoolean()
+    private val factoryDeliveryEpoch = AtomicLong()
+    private val uplinkDeliveryEpoch = AtomicLong()
     private val dispatching = AtomicBoolean()
     private val stopping = AtomicBoolean()
+    private val sourceInputClosed = AtomicBoolean()
     private val receiptInputClosed = AtomicBoolean()
     private val inFlightRows = ConcurrentHashMap.newKeySet<Long>()
     private val inFlightDeadlines = ConcurrentHashMap<Long, Instant>()
     private val inFlightEventRows = ConcurrentHashMap<UUID, Long>()
     private val inFlightRowEvents = ConcurrentHashMap<Long, UUID>()
+    private val sourceQueue = ArrayBlockingQueue<SourceWork>(properties.sourceQueueCapacity)
     private val receiptQueue = ArrayBlockingQueue<ReceiptWork>(properties.receiptQueueCapacity)
     private val dispatchExecutors = List(properties.dispatchShards) { shard ->
         serialExecutor("edge-dispatch-$shard", properties.dispatchQueueCapacity)
@@ -63,14 +70,21 @@ class EdgeMqttBridge(
         Duration.ofSeconds(properties.retryBaseSeconds),
         Duration.ofSeconds(properties.retryCapSeconds),
     )
-    private val factoryClient = mqttClient(properties.factory) { factorySubscribed.set(false) }
-    private val uplinkClient = mqttClient(properties.uplink) { receiptSubscribed.set(false) }
+    private val factoryClient = mqttClient(properties.factory) {
+        factorySubscribed.set(false)
+        factoryDeliveryEpoch.incrementAndGet()
+    }
+    private val uplinkClient = mqttClient(properties.uplink) {
+        receiptSubscribed.set(false)
+        uplinkDeliveryEpoch.incrementAndGet()
+    }
 
     init {
         // Register global flows before CONNECT so queued messages from a persistent
         // MQTT session cannot arrive in the connect-to-subscribe callback gap.
         factoryClient.publishes(MqttGlobalPublishFilter.ALL, ::handleSource, sourceExecutor, true)
         uplinkClient.publishes(MqttGlobalPublishFilter.ALL, ::handleReceipt, receiptExecutor, true)
+        sourceWriterExecutor.execute(::persistSourceBatches)
         receiptWriterExecutor.execute(::persistReceiptBatches)
     }
 
@@ -79,6 +93,9 @@ class EdgeMqttBridge(
         require(properties.uplink.password.isNotBlank()) { "Uplink MQTT password is required" }
         require(properties.dispatchShards in 1..128) { "Dispatch shards must be between 1 and 128" }
         require(properties.dispatchQueueCapacity in 1..10_000) { "Dispatch queue capacity must be between 1 and 10000" }
+        require(properties.sourceBatchSize in 1..5_000) { "Source batch size must be between 1 and 5000" }
+        require(properties.sourceQueueCapacity in 1..100_000) { "Source queue capacity must be between 1 and 100000" }
+        require(properties.sourceBatchLingerMillis in 1..1_000) { "Source batch linger must be between 1 and 1000 ms" }
         require(properties.receiptBatchSize in 1..5_000) { "Receipt batch size must be between 1 and 5000" }
         require(properties.receiptQueueCapacity in 1..100_000) { "Receipt queue capacity must be between 1 and 100000" }
         require(properties.receiptBatchLingerMillis in 1..1_000) { "Receipt batch linger must be between 1 and 1000 ms" }
@@ -222,6 +239,7 @@ class EdgeMqttBridge(
     }
 
     private fun handleSource(publish: Mqtt5Publish) {
+        val epoch = factoryDeliveryEpoch.get()
         val topic = publish.topic.toString()
         val payload = publish.payloadAsBytes
         try {
@@ -231,34 +249,79 @@ class EdgeMqttBridge(
             val event = CycleEvent.from(source, clock.instant())
             val canonical = validator.write(event)
             validator.readCanonical(canonical)
-            when (repository.store(event, normalizedSource, canonical)) {
-                StoreResult.INSERTED -> {
-                    metrics.received.increment()
-                    logger.atDebug()
-                        .addKeyValue("eventId", event.eventId())
-                        .addKeyValue("machineId", event.machineId())
-                        .addKeyValue("siteId", event.siteId())
-                        .addKeyValue("sequenceNumber", event.sequenceNumber())
-                        .addKeyValue("schemaVersion", event.schemaVersion())
-                        .log("Source event persisted to edge outbox")
-                }
-                StoreResult.DUPLICATE -> metrics.sourceDuplicates.increment()
-                StoreResult.CONFLICT -> {
-                    metrics.sourceConflicts.increment()
-                    repository.quarantine(topic, payload, "IDENTITY_CONFLICT", "Source identity has conflicting content")
-                }
-            }
-            publish.acknowledge()
+            sourceQueue.put(SourceWork(publish, epoch, topic, payload, event, normalizedSource, canonical))
         } catch (exception: ContractViolationException) {
             repository.quarantine(topic, payload, "INVALID_SOURCE", exception.violations().firstOrNull() ?: "Invalid source")
             metrics.invalid.increment()
-            publish.acknowledge()
+            if (isCurrentFactoryDelivery(epoch)) publish.acknowledge()
         } catch (exception: Exception) {
             logger.error("source_persistence_failed topic={} reason={}", topic, exception.javaClass.simpleName)
         }
     }
 
+    private fun persistSourceBatches() {
+        while (!sourceInputClosed.get() || sourceQueue.isNotEmpty()) {
+            try {
+                val first = sourceQueue.poll(100, TimeUnit.MILLISECONDS) ?: continue
+                val batch = ArrayList<SourceWork>(properties.sourceBatchSize)
+                batch.add(first)
+                val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(properties.sourceBatchLingerMillis)
+                while (batch.size < properties.sourceBatchSize) {
+                    val remaining = deadline - System.nanoTime()
+                    if (remaining <= 0) break
+                    val next = sourceQueue.poll(remaining, TimeUnit.NANOSECONDS) ?: break
+                    batch.add(next)
+                }
+                persistSourceBatch(batch)
+            } catch (exception: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return
+            } catch (exception: Exception) {
+                logger.error("source_batch_persistence_failed reason={}", exception.javaClass.simpleName)
+                sourceQueue.clear()
+                disconnectForSourceRedelivery()
+            }
+        }
+    }
+
+    private fun persistSourceBatch(batch: List<SourceWork>) {
+        val results = repository.storeBatch(batch.map { work ->
+            StoreCommand(work.event, work.normalizedSource, work.canonical)
+        })
+        val conflicts = batch.zip(results).filter { (_, result) -> result == StoreResult.CONFLICT }
+        if (conflicts.isNotEmpty()) {
+            repository.quarantineBatch(conflicts.map { (work, _) ->
+                QuarantineCommand(
+                    work.topic,
+                    work.payload,
+                    "IDENTITY_CONFLICT",
+                    "Source identity has conflicting content",
+                )
+            })
+        }
+        batch.zip(results).forEach { (work, result) ->
+            when (result) {
+                StoreResult.INSERTED -> {
+                    metrics.received.increment()
+                    logger.atDebug()
+                        .addKeyValue("eventId", work.event.eventId())
+                        .addKeyValue("machineId", work.event.machineId())
+                        .addKeyValue("siteId", work.event.siteId())
+                        .addKeyValue("sequenceNumber", work.event.sequenceNumber())
+                        .addKeyValue("schemaVersion", work.event.schemaVersion())
+                        .log("Source event persisted to edge outbox")
+                }
+                StoreResult.DUPLICATE -> metrics.sourceDuplicates.increment()
+                StoreResult.CONFLICT -> metrics.sourceConflicts.increment()
+            }
+        }
+        batch.forEach { work ->
+            if (isCurrentFactoryDelivery(work.deliveryEpoch)) work.publish.acknowledge()
+        }
+    }
+
     private fun handleReceipt(publish: Mqtt5Publish) {
+        val epoch = uplinkDeliveryEpoch.get()
         val topic = publish.topic.toString()
         val payload = publish.payloadAsBytes
         try {
@@ -271,13 +334,14 @@ class EdgeMqttBridge(
             receiptQueue.put(
                 ReceiptWork(
                     publish,
+                    epoch,
                     ReceiptSettlement(receipt.eventId(), siteId, receipt.status(), receipt.errorCode()),
                 ),
             )
         } catch (exception: ContractViolationException) {
             repository.quarantine(topic, payload, "INVALID_RECEIPT", exception.violations().firstOrNull() ?: "Invalid receipt")
             metrics.invalid.increment()
-            publish.acknowledge()
+            if (isCurrentUplinkDelivery(epoch)) publish.acknowledge()
         } catch (exception: Exception) {
             logger.error("receipt_persistence_failed topic={} reason={}", topic, exception.javaClass.simpleName)
         }
@@ -321,7 +385,7 @@ class EdgeMqttBridge(
         batch.forEach { work ->
             clearReceiptWait(work.settlement.eventId, inFlightEventRows[work.settlement.eventId])
             metrics.receipts.increment()
-            work.publish.acknowledge()
+            if (isCurrentUplinkDelivery(work.deliveryEpoch)) work.publish.acknowledge()
         }
     }
 
@@ -356,6 +420,17 @@ class EdgeMqttBridge(
         receiptSubscribed.set(false)
         uplinkClient.disconnect().exceptionally { null }
     }
+
+    private fun disconnectForSourceRedelivery() {
+        factorySubscribed.set(false)
+        factoryClient.disconnect().exceptionally { null }
+    }
+
+    private fun isCurrentFactoryDelivery(epoch: Long): Boolean =
+        epoch == factoryDeliveryEpoch.get() && factoryClient.config.state.isConnected
+
+    private fun isCurrentUplinkDelivery(epoch: Long): Boolean =
+        epoch == uplinkDeliveryEpoch.get() && uplinkClient.config.state.isConnected
 
     private fun mqttClient(
         endpoint: EdgeProperties.MqttEndpoint,
@@ -400,6 +475,11 @@ class EdgeMqttBridge(
     fun stop() {
         stopping.set(true)
         runCatching { factoryClient.disconnect().get(5, TimeUnit.SECONDS) }
+        sourceExecutor.shutdown()
+        runCatching { sourceExecutor.awaitTermination(5, TimeUnit.SECONDS) }
+        sourceInputClosed.set(true)
+        sourceWriterExecutor.shutdown()
+        runCatching { sourceWriterExecutor.awaitTermination(15, TimeUnit.SECONDS) }
         dispatchExecutors.forEach { it.shutdown() }
         dispatchExecutors.forEach { runCatching { it.awaitTermination(10, TimeUnit.SECONDS) } }
         receiptExecutor.shutdown()
@@ -408,11 +488,21 @@ class EdgeMqttBridge(
         receiptWriterExecutor.shutdown()
         runCatching { receiptWriterExecutor.awaitTermination(15, TimeUnit.SECONDS) }
         runCatching { uplinkClient.disconnect().get(5, TimeUnit.SECONDS) }
-        sourceExecutor.shutdown()
     }
+
+    private data class SourceWork(
+        val publish: Mqtt5Publish,
+        val deliveryEpoch: Long,
+        val topic: String,
+        val payload: ByteArray,
+        val event: CycleEvent,
+        val normalizedSource: ByteArray,
+        val canonical: ByteArray,
+    )
 
     private data class ReceiptWork(
         val publish: Mqtt5Publish,
+        val deliveryEpoch: Long,
         val settlement: ReceiptSettlement,
     )
 }

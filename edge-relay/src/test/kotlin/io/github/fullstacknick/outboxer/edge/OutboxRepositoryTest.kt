@@ -59,6 +59,26 @@ class OutboxRepositoryTest {
     }
 
     @Test
+    fun `stores source batches atomically with per-event outcomes`() {
+        val first = event(sequenceNumber = 1)
+        val second = event(
+            sequenceNumber = 2,
+            eventId = UUID.fromString("42171ac6-e008-40ba-af87-48517bba0465"),
+        )
+
+        val results = repository.storeBatch(
+            listOf(
+                StoreCommand(first, "source-1".toByteArray(), "canonical-1".toByteArray()),
+                StoreCommand(second, "source-2".toByteArray(), "canonical-2".toByteArray()),
+                StoreCommand(first, "source-1".toByteArray(), "canonical-1".toByteArray()),
+            ),
+        )
+
+        assertThat(results).containsExactly(StoreResult.INSERTED, StoreResult.INSERTED, StoreResult.DUPLICATE)
+        assertThat(repository.pendingCount()).isEqualTo(2)
+    }
+
+    @Test
     fun `retains pending payload and schedules application receipt retries`() {
         val event = event()
         val canonical = "canonical".toByteArray()
