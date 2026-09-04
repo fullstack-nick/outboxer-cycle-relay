@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: outboxer-edge-config
+  namespace: outboxer
+  labels:
+    app.kubernetes.io/name: outboxer-edge
+    app.kubernetes.io/part-of: outboxer
+data:
+  EDGE_HTTP_PORT: "8080"
+  EDGE_DATABASE_URL: jdbc:sqlite:/var/lib/outboxer/edge.db?journal_mode=WAL&synchronous=FULL&foreign_keys=on&busy_timeout=5000
+  FACTORY_MQTT_HOST: factory-mqtt
+  FACTORY_MQTT_PORT: "1883"
+  FACTORY_MQTT_USERNAME: edge-factory
+  FACTORY_MQTT_CLIENT_ID: outboxer-kind-edge-factory
+  UPLINK_MQTT_HOST: uplink-mqtt
+  UPLINK_MQTT_PORT: "1883"
+  UPLINK_MQTT_USERNAME: edge-uplink
+  UPLINK_MQTT_CLIENT_ID: outboxer-kind-edge-uplink
+  JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: outboxer-central-config
+  namespace: outboxer
+  labels:
+    app.kubernetes.io/name: outboxer-central
+    app.kubernetes.io/part-of: outboxer
+data:
+  CENTRAL_HTTP_PORT: "8080"
+  CENTRAL_JDBC_URL: jdbc:postgresql://postgres:5432/outboxer
+  CENTRAL_R2DBC_URL: r2dbc:postgresql://postgres:5432/outboxer
+  POSTGRES_APP_USERNAME: outboxer_app
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  UPLINK_MQTT_HOST: uplink-mqtt
+  UPLINK_MQTT_PORT: "1883"
+  UPLINK_MQTT_USERNAME: central-uplink
+  UPLINK_MQTT_CLIENT_ID: outboxer-kind-central-uplink
+  JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError

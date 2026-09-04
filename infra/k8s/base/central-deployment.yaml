@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: outboxer-central
+  namespace: outboxer
+  labels:
+    app.kubernetes.io/name: outboxer-central
+    app.kubernetes.io/component: central-service
+    app.kubernetes.io/part-of: outboxer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: outboxer-central
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: outboxer-central
+        app.kubernetes.io/component: central-service
+        app.kubernetes.io/part-of: outboxer
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 35
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: central-cycle-service
+          image: outboxer/central-cycle-service:local
+          imagePullPolicy: Never
+          envFrom:
+            - configMapRef:
+                name: outboxer-central-config
+          env:
+            - name: POSTGRES_APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: outboxer-central-credentials
+                  key: postgres-app-password
+            - name: UPLINK_MQTT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: outboxer-central-credentials
+                  key: uplink-mqtt-password
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 18
+          resources:
+            requests:
+              cpu: 150m
+              memory: 384Mi
+            limits:
+              cpu: "2"
+              memory: 768Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: temporary-files
+              mountPath: /tmp
+      volumes:
+        - name: temporary-files
+          emptyDir:
+            sizeLimit: 64Mi

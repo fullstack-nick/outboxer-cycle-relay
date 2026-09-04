@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - configmaps.yaml
+  - edge-pvc.yaml
+  - edge-deployment.yaml
+  - edge-service.yaml
+  - central-deployment.yaml
+  - central-service.yaml

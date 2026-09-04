@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: outboxer-edge
+  namespace: outboxer
+  labels:
+    app.kubernetes.io/name: outboxer-edge
+    app.kubernetes.io/component: edge-relay
+    app.kubernetes.io/part-of: outboxer
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: outboxer-edge
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: outboxer-edge
+        app.kubernetes.io/component: edge-relay
+        app.kubernetes.io/part-of: outboxer
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: edge-relay
+          image: outboxer/edge-relay:local
+          imagePullPolicy: Never
+          envFrom:
+            - configMapRef:
+                name: outboxer-edge-config
+          env:
+            - name: FACTORY_MQTT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: outboxer-edge-credentials
+                  key: factory-mqtt-password
+            - name: UPLINK_MQTT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: outboxer-edge-credentials
+                  key: uplink-mqtt-password
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 640Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: edge-data
+              mountPath: /var/lib/outboxer
+            - name: temporary-files
+              mountPath: /tmp
+      volumes:
+        - name: edge-data
+          persistentVolumeClaim:
+            claimName: outboxer-edge-data
+        - name: temporary-files
+          emptyDir:
+            sizeLimit: 64Mi

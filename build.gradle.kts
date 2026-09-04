@@ -97,3 +97,27 @@ tasks.register("publicationCheck") {
     description = "Checks tracked content and repository metadata before publication."
     dependsOn("check")
 }
+
+fun localScript(powerShellScript: String, bashScript: String, vararg arguments: String): List<String> {
+    val windows = System.getProperty("os.name").startsWith("Windows")
+    return if (windows) {
+        listOf("pwsh", "-NoProfile", "-File", powerShellScript) + arguments
+    } else {
+        listOf("bash", bashScript) + arguments
+    }
+}
+
+tasks.register<Exec>("kubernetesManifestTest") {
+    group = "verification"
+    description = "Validates Kubernetes manifests from a local schema cache without cluster discovery."
+    workingDir(rootDir)
+    commandLine(localScript("scripts/kind-smoke.ps1", "scripts/kind-smoke.sh", if (System.getProperty("os.name").startsWith("Windows")) "-OfflineOnly" else "--offline-only"))
+}
+
+tasks.register<Exec>("kindSmokeTest") {
+    group = "verification"
+    description = "Runs the isolated local kind deployment smoke test."
+    dependsOn("check")
+    workingDir(rootDir)
+    commandLine(localScript("scripts/kind-smoke.ps1", "scripts/kind-smoke.sh"))
+}

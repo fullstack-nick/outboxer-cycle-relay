@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: outboxer-edge-data
+  namespace: outboxer
+  labels:
+    app.kubernetes.io/name: outboxer-edge
+    app.kubernetes.io/part-of: outboxer
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
