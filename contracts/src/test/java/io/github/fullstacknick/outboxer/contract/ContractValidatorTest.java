@@ -21,10 +21,35 @@ class ContractValidatorTest {
     void readsValidSourceAndCanonicalFixtures() throws IOException {
         MachineCycleEvent source = validator.readSource(resource("machine-cycle-v1.valid.json"));
         CycleEvent canonical = validator.readCanonical(resource("cycle-v1.valid.json"));
+        MachineCycleEvent sourceV2 = validator.readSource(resource("machine-cycle-v2.valid.json"));
+        CycleEvent canonicalV2 = validator.readCanonical(resource("cycle-v2.valid.json"));
 
         assertThat(source.machineId()).isEqualTo("IMM-0042");
         assertThat(canonical.eventId()).isEqualTo(source.eventId());
         assertThat(canonical.edgeReceivedAt()).isAfter(source.occurredAt());
+        assertThat(source.payload().energyConsumptionWh()).isNull();
+        assertThat(sourceV2.schemaVersion()).isEqualTo(2);
+        assertThat(sourceV2.payload().energyConsumptionWh()).isEqualTo(312.5);
+        assertThat(canonicalV2.eventId()).isEqualTo(sourceV2.eventId());
+        assertThat(canonicalV2.payload().energyConsumptionWh()).isEqualTo(312.5);
+    }
+
+    @Test
+    void preservesV1WireShapeAndAllowsOnlyV2ToCarryEnergy() throws IOException {
+        MachineCycleEvent sourceV1 = validator.readSource(resource("machine-cycle-v1.valid.json"));
+        String serializedV1 = new String(validator.write(sourceV1));
+        String v1WithEnergy = new String(resource("machine-cycle-v1.valid.json"))
+                .replace("\"rejectedParts\": 0", "\"rejectedParts\": 0,\n    \"energyConsumptionWh\": 312.5");
+        String negativeV2 = new String(resource("machine-cycle-v2.valid.json"))
+                .replace("\"energyConsumptionWh\": 312.5", "\"energyConsumptionWh\": -0.1");
+
+        assertThat(serializedV1).doesNotContain("energyConsumptionWh");
+        assertThatThrownBy(() -> validator.readSource(v1WithEnergy.getBytes()))
+                .isInstanceOf(ContractViolationException.class)
+                .hasMessageContaining("energyConsumptionWh");
+        assertThatThrownBy(() -> validator.readSource(negativeV2.getBytes()))
+                .isInstanceOf(ContractViolationException.class)
+                .hasMessageContaining("minimum");
     }
 
     @Test

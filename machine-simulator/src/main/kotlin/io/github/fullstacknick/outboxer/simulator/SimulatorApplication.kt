@@ -44,6 +44,7 @@ internal data class SimulatorConfiguration(
     val machineCount: Int,
     val cycleInterval: Duration,
     val eventCount: Long,
+    val v2Percentage: Int,
     val runId: String,
     val expectedFile: Path?,
 ) {
@@ -53,8 +54,10 @@ internal data class SimulatorConfiguration(
 
             val machineCount = value("SIMULATOR_MACHINE_COUNT", "3000").toInt()
             val cycleSeconds = value("SIMULATOR_CYCLE_INTERVAL_SECONDS", "30").toLong()
+            val v2Percentage = value("SIMULATOR_V2_PERCENTAGE", "25").toInt()
             require(machineCount in 1..100_000) { "SIMULATOR_MACHINE_COUNT must be between 1 and 100000" }
             require(cycleSeconds > 0) { "SIMULATOR_CYCLE_INTERVAL_SECONDS must be positive" }
+            require(v2Percentage in 0..100) { "SIMULATOR_V2_PERCENTAGE must be between 0 and 100" }
 
             return SimulatorConfiguration(
                 brokerHost = value("FACTORY_MQTT_HOST", "localhost"),
@@ -67,6 +70,7 @@ internal data class SimulatorConfiguration(
                 machineCount = machineCount,
                 cycleInterval = Duration.ofSeconds(cycleSeconds),
                 eventCount = value("SIMULATOR_EVENT_COUNT", "0").toLong(),
+                v2Percentage = v2Percentage,
                 runId = value("SIMULATOR_RUN_ID", UUID.randomUUID().toString()),
                 expectedFile = environment["SIMULATOR_EXPECTED_FILE"]?.takeIf { it.isNotBlank() }?.let(Path::of),
             )
@@ -133,8 +137,10 @@ internal class CycleSimulator(
         val sequence = sequences[machineIndex]++
         val bootId = stableUuid("${configuration.runId}:$machineId:boot")
         val eventId = stableUuid("${configuration.runId}:$machineId:$sequence")
+        val schemaVersion =
+            if ((machineIndex.toLong() + sequence) % 100 < configuration.v2Percentage.toLong()) 2 else 1
         val event = MachineCycleEvent(
-            1,
+            schemaVersion,
             eventId,
             configuration.tenantId,
             configuration.siteId,
@@ -143,7 +149,7 @@ internal class CycleSimulator(
             sequence,
             Instant.now(),
             MachineCycleEvent.TYPE,
-            payload(machineIndex, sequence),
+            payload(machineIndex, sequence, schemaVersion),
         )
         val bytes = validator.write(event)
         client.publishWith()
@@ -163,7 +169,7 @@ internal class CycleSimulator(
         }
     }
 
-    private fun payload(machineIndex: Int, sequence: Long): CyclePayload {
+    private fun payload(machineIndex: Int, sequence: Long, schemaVersion: Int): CyclePayload {
         val variation = (machineIndex % 17) * 23L + (sequence % 11) * 7L
         return CyclePayload(
             sequence,
@@ -176,6 +182,7 @@ internal class CycleSimulator(
             225.0 + machineIndex % 20,
             4,
             if ((machineIndex + sequence) % 97L == 0L) 1 else 0,
+            if (schemaVersion == 2) 280.0 + (machineIndex % 40) * 1.5 + (sequence % 13) * 0.25 else null,
         )
     }
 

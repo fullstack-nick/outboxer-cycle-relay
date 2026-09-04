@@ -141,6 +141,33 @@ class CyclePersistenceServiceIntegrationTest {
                 .containsEntry("duplicate_event_count", 1L);
     }
 
+    @Test
+    void storesNullableV1EnergyAndTheV2Value() {
+        CycleEvent version1 = event(0, "de73fc96-87ab-460f-b24f-a81c51dfec6f");
+        CycleEvent version2 = new CycleEvent(
+                2,
+                UUID.fromString("0e17e56c-dde9-4e54-870c-75dc37a03c35"),
+                "tenant-017",
+                "site-north-01",
+                "IMM-0042",
+                UUID.fromString("f16fa35a-836c-4246-b707-f05e0ff491e2"),
+                1,
+                Instant.parse("2026-09-04T12:00:01Z"),
+                Instant.parse("2026-09-04T12:00:02Z"),
+                "CYCLE_COMPLETED",
+                new CyclePayload(1, 20_000, 4_000, 700, 11_000, 2_000, 1_200, 230, 4, 0, 318.75));
+
+        persist(version1, "version-1", 0, 0, INGESTED_AT);
+        persist(version2, "version-2", 0, 1, INGESTED_AT);
+
+        assertThat(jdbc.queryForObject(
+                        "SELECT energy_consumption_wh FROM cycle_event WHERE schema_version = 1", Double.class))
+                .isNull();
+        assertThat(jdbc.queryForObject(
+                        "SELECT energy_consumption_wh FROM cycle_event WHERE schema_version = 2", Double.class))
+                .isEqualTo(318.75);
+    }
+
     private CyclePersistenceService.Outcome persist(
             CycleEvent event, String json, int partition, long offset, Instant cloudReceivedAt) {
         return transaction.execute(status -> service.persist(event, json, partition, offset, cloudReceivedAt));

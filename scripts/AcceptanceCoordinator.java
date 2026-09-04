@@ -112,17 +112,38 @@ public final class AcceptanceCoordinator {
         startBaseStack();
         assertOperationalSecurity();
 
-        Path expected = freshExpectedFile("smoke");
-        String runId = runId("smoke");
-        runSimulator(runId, expected, 2, 1, 1);
-        Set<String> initialIds = expectedIds(expected);
+        Path expectedV1 = freshExpectedFile("smoke-v1");
+        Path expectedV2 = freshExpectedFile("smoke-v2");
+        runSimulator(runId("smoke-v1"), expectedV1, 1, 1, 1, 0);
+        runSimulator(runId("smoke-v2"), expectedV2, 1, 1, 1, 100);
+        Set<String> version1Ids = expectedIds(expectedV1);
+        Set<String> version2Ids = expectedIds(expectedV2);
+        String version1Id = version1Ids.iterator().next();
+        String version2Id = version2Ids.iterator().next();
+        Set<String> initialIds = new HashSet<>(version1Ids);
+        initialIds.addAll(version2Ids);
         waitForDatabaseIds(initialIds, Duration.ofMinutes(2));
         waitUntil("edge outbox to drain", Duration.ofMinutes(2), () -> edgePending() == 0);
         assertCondition(
                 "happy_path_exact_rows",
                 initialIds.stream().allMatch(id -> postgresCount(id) == 1),
                 "two source IDs reached PostgreSQL once each");
+        assertCondition(
+                "schema_v1_nullable_energy",
+                postgresScalar("SELECT COUNT(*) FROM cycle_event WHERE event_id = '"
+                                + sqlIdentifier(version1Id)
+                                + "' AND schema_version = 1 AND energy_consumption_wh IS NULL")
+                        == 1,
+                "the unchanged v1 sender stored a nullable energy value");
+        assertCondition(
+                "schema_v2_energy_round_trip",
+                postgresScalar("SELECT COUNT(*) FROM cycle_event WHERE event_id = '"
+                                + sqlIdentifier(version2Id)
+                                + "' AND schema_version = 2 AND energy_consumption_wh IS NOT NULL")
+                        == 1,
+                "the v2 energy value reached PostgreSQL");
         assertApi("IMM-0001");
+        assertSchemaEvolutionApi("IMM-0001");
 
         long edgeRejectedBefore = edgeScalar("SELECT COUNT(*) FROM edge_rejected_message");
         publishFactory("factory/IMM-0001/cycles", Files.readAllBytes(ROOT.resolve(
@@ -512,6 +533,17 @@ public final class AcceptanceCoordinator {
             int machineCount,
             int cycleIntervalSeconds)
             throws Exception {
+        runSimulator(runId, expected, eventCount, machineCount, cycleIntervalSeconds, 25);
+    }
+
+    private void runSimulator(
+            String runId,
+            Path expected,
+            long eventCount,
+            int machineCount,
+            int cycleIntervalSeconds,
+            int v2Percentage)
+            throws Exception {
         compose(
                 Map.of(),
                 "--profile",
@@ -527,6 +559,8 @@ public final class AcceptanceCoordinator {
                 "SIMULATOR_MACHINE_COUNT=" + machineCount,
                 "-e",
                 "SIMULATOR_CYCLE_INTERVAL_SECONDS=" + cycleIntervalSeconds,
+                "-e",
+                "SIMULATOR_V2_PERCENTAGE=" + v2Percentage,
                 "-e",
                 "SIMULATOR_EXPECTED_FILE=/evidence/" + expected.getFileName(),
                 "machine-simulator");
@@ -584,6 +618,20 @@ public final class AcceptanceCoordinator {
                 "api_requires_tenant_header",
                 missingTenant.statusCode() == 400,
                 "missing local-demo tenant scope is rejected");
+    }
+
+    private void assertSchemaEvolutionApi(String machineId) throws Exception {
+        HttpResponse<String> recent = httpGet(
+                "http://127.0.0.1:18080/api/v1/machines/" + machineId + "/cycles?limit=10",
+                Map.of("X-Tenant-Id", "tenant-017"));
+        assertCondition(
+                "api_v1_v2_energy_shape",
+                recent.statusCode() == 200
+                        && recent.body().contains("\"schemaVersion\":1")
+                        && recent.body().contains("\"schemaVersion\":2")
+                        && recent.body().contains("\"energyConsumptionWh\":null")
+                        && recent.body().matches("(?s).*\"energyConsumptionWh\":[0-9].*"),
+                "the API returned nullable v1 energy and populated v2 energy");
     }
 
     private void assertMetrics() throws Exception {

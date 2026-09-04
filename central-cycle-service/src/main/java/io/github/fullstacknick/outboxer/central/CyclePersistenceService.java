@@ -42,8 +42,8 @@ class CyclePersistenceService {
             schema_version, occurred_at, edge_received_at, cloud_received_at, ingested_at,
             cycle_number, total_duration_ms, plasticizing_duration_ms, injection_duration_ms,
             cooling_duration_ms, demolding_duration_ms, peak_injection_pressure_bar,
-            melt_temperature_c, good_parts, rejected_parts, payload_sha256, kafka_partition,
-            kafka_offset
+            melt_temperature_c, good_parts, rejected_parts, energy_consumption_wh,
+            payload_sha256, kafka_partition, kafka_offset
             """;
 
     private final JdbcTemplate jdbcTemplate;
@@ -114,7 +114,7 @@ class CyclePersistenceService {
 
     private Set<InsertedKey> bulkInsertCycles(List<PreparedCommand> commands, Instant ingestedAt) {
         String sql = "INSERT INTO cycle_event (" + CYCLE_COLUMNS + ") VALUES "
-                + valueRows(commands.size(), 24)
+                + valueRows(commands.size(), 25)
                 + " ON CONFLICT DO NOTHING RETURNING "
                 + "event_id, tenant_id, machine_id, machine_boot_id, sequence_number";
         return jdbcTemplate.query(
@@ -359,6 +359,7 @@ class CyclePersistenceService {
         statement.setDouble(parameter++, payload.meltTemperatureC());
         statement.setLong(parameter++, payload.goodParts());
         statement.setLong(parameter++, payload.rejectedParts());
+        statement.setObject(parameter++, payload.energyConsumptionWh());
         statement.setString(parameter++, command.hash());
         statement.setInt(parameter++, command.command().partition());
         statement.setLong(parameter++, command.command().offset());

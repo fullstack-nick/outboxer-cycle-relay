@@ -1,5 +1,6 @@
 package io.github.fullstacknick.outboxer.central;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -40,9 +41,28 @@ class CycleControllerTest {
                 .jsonPath("$.machineId")
                 .isEqualTo("IMM-0042")
                 .jsonPath("$.schemaVersion")
-                .isEqualTo(1);
+                .isEqualTo(1)
+                .consumeWith(result -> assertThat(new String(result.getResponseBody()))
+                        .contains("\"energyConsumptionWh\":null"));
 
         verify(repository).latest("tenant-017", "IMM-0042");
+    }
+
+    @Test
+    void returnsTheV2EnergyValue() {
+        when(repository.latest("tenant-017", "IMM-0042")).thenReturn(Mono.just(response(2, 318.75)));
+
+        client.get()
+                .uri("/api/v1/machines/IMM-0042/cycles/latest")
+                .header("X-Tenant-Id", "tenant-017")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$.schemaVersion")
+                .isEqualTo(2)
+                .jsonPath("$.energyConsumptionWh")
+                .isEqualTo(318.75);
     }
 
     @Test
@@ -111,8 +131,12 @@ class CycleControllerTest {
     }
 
     private static CycleResponse response() {
+        return response(1, null);
+    }
+
+    private static CycleResponse response(int schemaVersion, Double energyConsumptionWh) {
         return new CycleResponse(
-                1,
+                schemaVersion,
                 UUID.fromString("de73fc96-87ab-460f-b24f-a81c51dfec6f"),
                 "tenant-017",
                 "site-north-01",
@@ -132,6 +156,7 @@ class CycleControllerTest {
                 1_200,
                 230,
                 4,
-                0);
+                0,
+                energyConsumptionWh);
     }
 }

@@ -24,4 +24,5 @@ public record CycleResponse(
         double peakInjectionPressureBar,
         double meltTemperatureC,
         long goodParts,
-        long rejectedParts) {}
+        long rejectedParts,
+        Double energyConsumptionWh) {}

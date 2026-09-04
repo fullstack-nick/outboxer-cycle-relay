@@ -22,7 +22,9 @@ public final class ContractValidator {
     private final Clock clock;
     private final Duration futureTolerance;
     private final Schema sourceV1;
+    private final Schema sourceV2;
     private final Schema canonicalV1;
+    private final Schema canonicalV2;
     private final Schema receiptV1;
 
     public ContractValidator(JsonMapper jsonMapper, Clock clock, Duration futureTolerance) {
@@ -31,18 +33,20 @@ public final class ContractValidator {
         this.futureTolerance = futureTolerance;
         SchemaRegistry registry = SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12);
         this.sourceV1 = load(registry, "/machine-cycle-completed-v1.schema.json");
+        this.sourceV2 = load(registry, "/machine-cycle-completed-v2.schema.json");
         this.canonicalV1 = load(registry, "/cycle-completed-v1.schema.json");
+        this.canonicalV2 = load(registry, "/cycle-completed-v2.schema.json");
         this.receiptV1 = load(registry, "/cycle-receipt-v1.schema.json");
     }
 
     public MachineCycleEvent readSource(byte[] payload) {
-        JsonNode node = parseAndValidate(payload, sourceV1, "source");
+        JsonNode node = parseVersionedAndValidate(payload, sourceV1, sourceV2, "source");
         validateNotFuture(node.path("occurredAt").asText());
         return jsonMapper.treeToValue(node, MachineCycleEvent.class);
     }
 
     public CycleEvent readCanonical(byte[] payload) {
-        JsonNode node = parseAndValidate(payload, canonicalV1, "canonical");
+        JsonNode node = parseVersionedAndValidate(payload, canonicalV1, canonicalV2, "canonical");
         validateNotFuture(node.path("occurredAt").asText());
         validateNotFuture(node.path("edgeReceivedAt").asText());
         return jsonMapper.treeToValue(node, CycleEvent.class);
@@ -57,7 +61,23 @@ public final class ContractValidator {
         return jsonMapper.writeValueAsBytes(value);
     }
 
+    private JsonNode parseVersionedAndValidate(
+            byte[] payload, Schema version1, Schema version2, String boundary) {
+        JsonNode node = parse(payload, boundary);
+        Schema schema = switch (node.path("schemaVersion").asInt(-1)) {
+            case 1 -> version1;
+            case 2 -> version2;
+            default -> throw new ContractViolationException(
+                    List.of(boundary + " schemaVersion is unsupported"));
+        };
+        return validate(node, schema);
+    }
+
     private JsonNode parseAndValidate(byte[] payload, Schema schema, String boundary) {
+        return validate(parse(payload, boundary), schema);
+    }
+
+    private JsonNode parse(byte[] payload, String boundary) {
         if (payload == null || payload.length == 0) {
             throw new ContractViolationException(List.of(boundary + " payload is empty"));
         }
@@ -65,21 +85,22 @@ public final class ContractValidator {
             throw new ContractViolationException(List.of(boundary + " payload exceeds 65536 bytes"));
         }
         try {
-            JsonNode node = jsonMapper.readTree(payload);
-            List<Error> errors = schema.validate(node);
-            if (!errors.isEmpty()) {
-                List<String> messages = errors.stream()
-                        .map(error -> error.getInstanceLocation() + ": " + error.getMessage())
-                        .sorted()
-                        .toList();
-                throw new ContractViolationException(messages);
-            }
-            return node;
-        } catch (ContractViolationException exception) {
-            throw exception;
+            return jsonMapper.readTree(payload);
         } catch (Exception exception) {
             throw new ContractViolationException(List.of(boundary + " payload is not valid JSON"));
         }
+    }
+
+    private static JsonNode validate(JsonNode node, Schema schema) {
+        List<Error> errors = schema.validate(node);
+        if (!errors.isEmpty()) {
+            List<String> messages = errors.stream()
+                    .map(error -> error.getInstanceLocation() + ": " + error.getMessage())
+                    .sorted()
+                    .toList();
+            throw new ContractViolationException(messages);
+        }
+        return node;
     }
 
     private void validateNotFuture(String value) {

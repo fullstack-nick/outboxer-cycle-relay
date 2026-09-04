@@ -16,7 +16,7 @@ class CycleQueryRepository {
                    sequence_number, occurred_at, edge_received_at, cloud_received_at, ingested_at,
                    cycle_number, total_duration_ms, plasticizing_duration_ms, injection_duration_ms,
                    cooling_duration_ms, demolding_duration_ms, peak_injection_pressure_bar,
-                   melt_temperature_c, good_parts, rejected_parts
+                   melt_temperature_c, good_parts, rejected_parts, energy_consumption_wh
             FROM cycle_event
             """;
 
@@ -87,7 +87,8 @@ class CycleQueryRepository {
                 required(row, "peak_injection_pressure_bar", Double.class),
                 required(row, "melt_temperature_c", Double.class),
                 required(row, "good_parts", Long.class),
-                required(row, "rejected_parts", Long.class));
+                required(row, "rejected_parts", Long.class),
+                row.get("energy_consumption_wh", Double.class));
     }
 
     private static <T> T required(Row row, String column, Class<T> type) {
