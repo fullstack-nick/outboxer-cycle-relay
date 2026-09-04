@@ -1,4 +1,4 @@
-FROM eclipse-temurin:21-jdk-jammy AS build
+FROM eclipse-temurin:21-jdk-jammy@sha256:ce5767b7222312d42395f5bab033cd91f09e44032a2f21bdfd7b5b912dbe1e77 AS build
 WORKDIR /workspace
 COPY gradle gradle
 COPY gradlew gradlew
@@ -10,7 +10,7 @@ COPY machine-simulator/build.gradle.kts machine-simulator/build.gradle.kts
 COPY edge-relay/build.gradle.kts edge-relay/build.gradle.kts
 RUN --mount=type=cache,target=/root/.gradle chmod +x gradlew && ./gradlew :central-cycle-service:bootJar --no-daemon
 
-FROM eclipse-temurin:21-jre-jammy
+FROM eclipse-temurin:21-jre-jammy@sha256:eebd356ad7358b7094758e5787a6726f332917cfd56feab6457c56dab895cdbf
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
@@ -21,4 +21,3 @@ COPY --from=build --chown=outboxer:outboxer /workspace/central-cycle-service/bui
 USER 10001:10001
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "/opt/outboxer/app.jar"]
-

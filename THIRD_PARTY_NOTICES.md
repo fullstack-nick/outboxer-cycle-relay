@@ -43,7 +43,7 @@ The result is written to `build/reports/licenses/resolved-dependencies.txt`. Dep
 | Apache Kafka image | `apache/kafka:4.3.1` | Apache-2.0 |
 | Eclipse Mosquitto image | `eclipse-mosquitto:2.1.2-alpine` | EPL-2.0 and EDL-1.0 project licensing; bundled packages retain their licenses |
 | PostgreSQL image | `postgres:18.6-alpine` | PostgreSQL License; bundled packages retain their licenses |
-| Eclipse Temurin JRE image | `eclipse-temurin:21-jre-alpine` | OpenJDK GPL-2.0-only WITH Classpath-exception-2.0; image packages retain their licenses |
+| Eclipse Temurin JDK/JRE images | digest-pinned `21-*-jammy` images | OpenJDK GPL-2.0-only WITH Classpath-exception-2.0; image packages retain their licenses |
 | kind | `v0.33.0` | Apache-2.0 |
 | Kubernetes and cached schemas | `v1.36.1` | Apache-2.0 |
 | kubeconform | `v0.8.0` | Apache-2.0 |

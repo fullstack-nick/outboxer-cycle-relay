@@ -11,7 +11,7 @@ plugins {
 }
 
 group = "io.github.fullstacknick.outboxer"
-version = "1.0.0-SNAPSHOT"
+version = "1.0.0"
 
 allprojects {
     group = rootProject.group
@@ -145,7 +145,8 @@ tasks.register("licenseReport") {
             add("Runtime container images")
             add("apache/kafka:4.3.1")
             add("eclipse-mosquitto:2.1.2-alpine")
-            add("eclipse-temurin:21-jre-alpine")
+            add("eclipse-temurin:21-jdk-jammy@sha256:ce5767b7222312d42395f5bab033cd91f09e44032a2f21bdfd7b5b912dbe1e77")
+            add("eclipse-temurin:21-jre-jammy@sha256:eebd356ad7358b7094758e5787a6726f332917cfd56feab6457c56dab895cdbf")
             add("postgres:18.6-alpine")
         }
         output.writeText(lines.joinToString(System.lineSeparator(), postfix = System.lineSeparator()), StandardCharsets.UTF_8)

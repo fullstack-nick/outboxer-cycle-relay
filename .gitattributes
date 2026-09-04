@@ -2,6 +2,7 @@
 *.sh text eol=lf
 *.ps1 text eol=crlf
 *.bat text eol=crlf
+Dockerfile text eol=lf
 *.kt text eol=lf
 *.java text eol=lf
 *.kts text eol=lf

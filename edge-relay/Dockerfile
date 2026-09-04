@@ -1,4 +1,4 @@
-FROM eclipse-temurin:21-jdk-jammy AS build
+FROM eclipse-temurin:21-jdk-jammy@sha256:ce5767b7222312d42395f5bab033cd91f09e44032a2f21bdfd7b5b912dbe1e77 AS build
 WORKDIR /workspace
 COPY gradle gradle
 COPY gradlew gradlew
@@ -17,11 +17,11 @@ RUN set -eux; \
     esac; \
     mkdir -p /workspace/sqlite-native; \
     cd /workspace/sqlite-native; \
-    jar xf /workspace/edge-relay/build/libs/edge-relay-1.0.0-SNAPSHOT.jar BOOT-INF/lib/sqlite-jdbc-3.53.4.0.jar; \
+    jar xf /workspace/edge-relay/build/libs/edge-relay-1.0.0.jar BOOT-INF/lib/sqlite-jdbc-3.53.4.0.jar; \
     jar xf BOOT-INF/lib/sqlite-jdbc-3.53.4.0.jar "org/sqlite/native/Linux/${sqlite_arch}/libsqlitejdbc.so"; \
     cp "org/sqlite/native/Linux/${sqlite_arch}/libsqlitejdbc.so" libsqlitejdbc.so
 
-FROM eclipse-temurin:21-jre-jammy
+FROM eclipse-temurin:21-jre-jammy@sha256:eebd356ad7358b7094758e5787a6726f332917cfd56feab6457c56dab895cdbf
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends curl sqlite3 \
     && rm -rf /var/lib/apt/lists/* \
